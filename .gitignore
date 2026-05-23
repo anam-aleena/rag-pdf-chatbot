@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[cod]
+*.pkl
+.ipynb_checkpoints/
+*.DS_Store
+data/vectorstore/
+data/sample_pdfs/*.pdf
+venv/
+.venv/
