@@ -193,7 +193,7 @@ with st.sidebar:
                 # Step 3 — Embed
                 progress.progress(65, text="🧠 Creating Gemini embeddings...")
                 embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/embedding-001",
+                    model="models/text-embedding-004",
                     google_api_key=st.session_state.api_key
                 )
                 vectorstore = FAISS.from_documents(chunks, embeddings)
