@@ -1,7 +1,7 @@
 """
 RAG PDF Chatbot — Streamlit App
 Author: Aleena Anam | github.com/anam-aleena
-Uses HuggingFace embeddings (free, no API needed) + Gemini for generation
+Google Gemini + LangChain + FAISS + HuggingFace Embeddings
 """
 
 import streamlit as st
@@ -50,7 +50,7 @@ with st.sidebar:
     st.markdown("---")
 
     st.markdown("### 🔑 Gemini API Key")
-    st.markdown("Get your **free** key 👉 [Google AI Studio](https://aistudio.google.com/app/apikey)")
+    st.markdown("Get free key 👉 [Google AI Studio](https://aistudio.google.com/app/apikey)")
 
     api_key_input = st.text_input(
         "API Key", type="password",
@@ -63,9 +63,9 @@ with st.sidebar:
         os.environ["GOOGLE_API_KEY"] = api_key_input
         st.success("✅ API key ready!")
     elif api_key_input:
-        st.error("❌ Invalid key. Gemini keys start with 'AIza'")
+        st.error("❌ Invalid key — must start with 'AIza'")
     else:
-        st.warning("⚠️ Enter your Gemini API key to start.")
+        st.warning("⚠️ Enter your Gemini API key")
 
     st.markdown("---")
     st.markdown("### 📄 Upload PDF Files")
@@ -83,6 +83,7 @@ with st.sidebar:
         if st.button("🚀 Process PDFs", type="primary", use_container_width=True):
             progress = st.progress(0, text="Starting...")
             try:
+                # Imports
                 from langchain_community.document_loaders import PyPDFLoader
                 from langchain.text_splitter import RecursiveCharacterTextSplitter
                 from langchain_community.vectorstores import FAISS
@@ -92,7 +93,7 @@ with st.sidebar:
                 from langchain.memory import ConversationBufferWindowMemory
                 from langchain.prompts import PromptTemplate
 
-                # Step 1 — Load
+                # Step 1 — Load PDFs
                 progress.progress(15, text="📖 Loading PDFs...")
                 all_docs = []
                 temp_dir = tempfile.mkdtemp()
@@ -102,40 +103,48 @@ with st.sidebar:
                     all_docs.extend(PyPDFLoader(str(tp)).load())
 
                 # Step 2 — Chunk
-                progress.progress(35, text="✂️ Splitting into chunks...")
-                splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+                progress.progress(35, text="✂️ Chunking text...")
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=800, chunk_overlap=100
+                )
                 chunks = splitter.split_documents(all_docs)
 
-                # Step 3 — Embed (HuggingFace — completely free, no API)
-                progress.progress(55, text="🧠 Creating embeddings (free HuggingFace model)...")
+                # Step 3 — Embed with HuggingFace (free, local)
+                progress.progress(55, text="🧠 Creating embeddings...")
                 embeddings = HuggingFaceEmbeddings(
                     model_name="all-MiniLM-L6-v2",
                     model_kwargs={"device": "cpu"}
                 )
                 vectorstore = FAISS.from_documents(chunks, embeddings)
 
-                # Step 4 — Build chain
-                progress.progress(80, text="⛓️ Building RAG chain with Gemini...")
+                # Step 4 — Build Gemini chain
+                progress.progress(80, text="⛓️ Connecting Gemini...")
+
                 PROMPT = PromptTemplate(
                     input_variables=["context", "chat_history", "question"],
-                    template="""You are a helpful AI assistant. Answer ONLY from the provided documents.
-If the answer is not found, say: "I couldn't find that in the uploaded documents."
+                    template="""You are a helpful AI assistant. Answer ONLY from the documents below.
+If not found, say: "I couldn't find that in the uploaded documents."
 
-Context: {context}
+Documents:
+{context}
+
 Chat History: {chat_history}
 Question: {question}
 Answer:"""
                 )
+
                 llm = ChatGoogleGenerativeAI(
-                    model="gemini-pro",
+                    model="gemini-1.5-flash-latest",
                     google_api_key=st.session_state.api_key,
                     temperature=0.2,
                     convert_system_message_to_human=True
                 )
+
                 memory = ConversationBufferWindowMemory(
                     k=5, memory_key="chat_history",
                     return_messages=True, output_key="answer"
                 )
+
                 chain = ConversationalRetrievalChain.from_llm(
                     llm=llm,
                     retriever=vectorstore.as_retriever(
@@ -148,7 +157,7 @@ Answer:"""
                     verbose=False
                 )
 
-                progress.progress(100, text="✅ Ready!")
+                progress.progress(100, text="✅ Done!")
                 time.sleep(0.5)
                 progress.empty()
 
@@ -157,7 +166,7 @@ Answer:"""
                 st.session_state.num_chunks = len(chunks)
                 st.session_state.num_pages = len(all_docs)
                 st.session_state.chat_history = []
-                st.success(f"✅ {len(all_docs)} pages indexed! Ask me anything.")
+                st.success(f"✅ {len(all_docs)} pages ready! Ask anything below.")
                 st.rerun()
 
             except Exception as e:
@@ -165,9 +174,11 @@ Answer:"""
                 err = str(e)
                 st.error(f"Error: {err}")
                 if "quota" in err.lower():
-                    st.info("💡 API quota hit. Wait 1 minute and retry.")
+                    st.info("💡 Free quota hit. Wait 1 min and retry.")
                 elif "api" in err.lower() or "key" in err.lower():
-                    st.info("💡 Check your Gemini API key.")
+                    st.info("💡 Check your API key at aistudio.google.com")
+                elif "404" in err or "not found" in err.lower():
+                    st.info("💡 Model issue — try regenerating your API key.")
 
     elif uploaded_files and not st.session_state.api_key_valid:
         st.warning("⚠️ Enter a valid API key first.")
@@ -190,7 +201,7 @@ Answer:"""
     st.markdown("---")
     st.markdown("""
 **How it works:**
-1. 🔑 Enter Gemini API key (starts with AIza)
+1. 🔑 Enter Gemini API key
 2. 📄 Upload PDF files
 3. 🚀 Click Process PDFs
 4. 💬 Ask anything!
@@ -202,10 +213,10 @@ Answer:"""
 # ─── MAIN AREA ───────────────────────────────────────────────────────────────
 
 st.markdown('<p class="main-title">📄 RAG PDF Chatbot</p>', unsafe_allow_html=True)
-st.markdown('<p class="main-sub">Chat with your PDF documents using Google Gemini AI · LangChain · FAISS</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-sub">Chat with your PDFs using Google Gemini AI · LangChain · FAISS · HuggingFace</p>', unsafe_allow_html=True)
 
 if not st.session_state.api_key_valid:
-    st.info("👈 **Step 1:** Enter your Gemini API key in the sidebar (starts with AIza...)")
+    st.info("👈 **Step 1:** Enter your Gemini API key in the sidebar")
 elif not st.session_state.docs_loaded:
     st.info("👈 **Step 2:** Upload PDF files and click **Process PDFs**")
 else:
@@ -213,6 +224,7 @@ else:
 
 st.markdown("---")
 
+# Chat history
 for msg in st.session_state.chat_history:
     with st.chat_message(msg["role"], avatar="🧑" if msg["role"] == "user" else "🤖"):
         st.markdown(msg["content"])
@@ -221,22 +233,27 @@ for msg in st.session_state.chat_history:
                 for i, src in enumerate(msg["sources"], 1):
                     st.markdown(f'<div class="source-card"><strong>Source {i}:</strong> {src["source"]} — Page {src["page"]}<br><em>{src["excerpt"]}</em></div>', unsafe_allow_html=True)
 
+# Chat input
 if prompt := st.chat_input("Ask a question about your documents...", disabled=not st.session_state.docs_loaded):
     with st.chat_message("user", avatar="🧑"):
         st.markdown(prompt)
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("🔍 Searching documents... then asking Gemini... (may take 15-30 secs on first query)"):
+        with st.spinner("🔍 Searching documents and generating answer..."):
             try:
-                result = st.session_state.chain({"question": prompt})
+                result = st.session_state.chain.invoke({"question": prompt})
                 answer = result["answer"]
                 sources = [
-                    {"page": doc.metadata.get("page", 0) + 1,
-                     "source": Path(doc.metadata.get("source", "doc")).name,
-                     "excerpt": doc.page_content[:180] + "..."}
+                    {
+                        "page": doc.metadata.get("page", 0) + 1,
+                        "source": Path(doc.metadata.get("source", "doc")).name,
+                        "excerpt": doc.page_content[:180] + "..."
+                    }
                     for doc in result.get("source_documents", [])
                 ]
+
+                # Stream response
                 placeholder = st.empty()
                 displayed = ""
                 for word in answer.split():
@@ -250,14 +267,29 @@ if prompt := st.chat_input("Ask a question about your documents...", disabled=no
                         for i, src in enumerate(sources, 1):
                             st.markdown(f'<div class="source-card"><strong>Source {i}:</strong> {src["source"]} — Page {src["page"]}<br><em>{src["excerpt"]}</em></div>', unsafe_allow_html=True)
 
-                st.session_state.chat_history.append({"role": "assistant", "content": answer, "sources": sources})
+                st.session_state.chat_history.append({
+                    "role": "assistant", "content": answer, "sources": sources
+                })
 
             except Exception as e:
-                st.error(f"Error: {str(e)}")
+                err = str(e)
+                st.error(f"Error: {err}")
+                if "quota" in err.lower():
+                    st.info("💡 API quota hit. Wait 1 minute and ask again.")
+                elif "404" in err:
+                    st.info("💡 Model not available. Check your API key permissions at aistudio.google.com")
 
+# Example prompts
 if st.session_state.docs_loaded and not st.session_state.chat_history:
     st.markdown("### 💡 Try asking:")
-    examples = ["Summarise this document", "What are the key points?", "What is the main conclusion?", "List the main topics", "What does this say about [topic]?", "Give me a brief overview"]
+    examples = [
+        "Summarise this document",
+        "What are the key points?",
+        "What is the main conclusion?",
+        "List the main topics covered",
+        "What does this say about [topic]?",
+        "Give me a brief overview"
+    ]
     cols = st.columns(3)
     for i, (col, ex) in enumerate(zip(cols * 2, examples)):
         with col:
