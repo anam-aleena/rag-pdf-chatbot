@@ -25,7 +25,7 @@ CHUNK_SIZE      = 800
 CHUNK_OVERLAP   = 100
 RETRIEVAL_K     = 4
 MEMORY_WINDOW   = 5
-LLM_MODEL       = "gemini-1.5-flash"   # Free tier model
+LLM_MODEL       = "gemini-1.5-flash-latest"
 EMBEDDING_MODEL = "models/embedding-001"
 VECTOR_STORE_PATH = "data/vectorstore"
 
