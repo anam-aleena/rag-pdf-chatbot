@@ -127,7 +127,7 @@ Question: {question}
 Answer:"""
                 )
                 llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
+                    model="gemini-pro",
                     google_api_key=st.session_state.api_key,
                     temperature=0.2,
                     convert_system_message_to_human=True
@@ -227,7 +227,7 @@ if prompt := st.chat_input("Ask a question about your documents...", disabled=no
     st.session_state.chat_history.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Searching and generating answer..."):
+        with st.spinner("🔍 Searching documents... then asking Gemini... (may take 15-30 secs on first query)"):
             try:
                 result = st.session_state.chain({"question": prompt})
                 answer = result["answer"]
