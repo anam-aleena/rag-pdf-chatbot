@@ -1,22 +1,14 @@
 """
 RAG PDF Chatbot — Streamlit App
 Author: Aleena Anam | github.com/anam-aleena
-
-Chat with your PDF documents using Google Gemini + LangChain + FAISS.
-Deploy free on Streamlit Cloud.
+Chat with your PDF documents using Google Gemini + LangChain + FAISS
 """
 
 import streamlit as st
 import time
-from pathlib import Path
-import tempfile
 import os
-
-from src.rag_pipeline import (
-    load_pdfs, chunk_documents, build_vectorstore,
-    build_rag_chain, load_vectorstore, ask
-)
-
+import tempfile
+from pathlib import Path
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 
@@ -27,144 +19,253 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
 st.markdown("""
 <style>
-    .main-header {
-        font-size: 2rem;
+    /* Force sidebar text to be visible */
+    section[data-testid="stSidebar"] {
+        background-color: #1E1E2E !important;
+        min-width: 300px !important;
+    }
+    section[data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
+    }
+    section[data-testid="stSidebar"] .stTextInput input {
+        background-color: #2D2D3F !important;
+        color: #FFFFFF !important;
+        border: 1px solid #555 !important;
+    }
+    section[data-testid="stSidebar"] .stButton button {
+        background-color: #7C3AED !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 8px !important;
+        font-weight: 600 !important;
+    }
+    section[data-testid="stSidebar"] .stFileUploader {
+        background-color: #2D2D3F !important;
+        border-radius: 8px !important;
+        padding: 8px !important;
+    }
+    /* Main area */
+    .main-title {
+        font-size: 2.2rem;
         font-weight: 700;
-        color: #1B4F72;
-        margin-bottom: 0.25rem;
+        color: #7C3AED;
+        margin-bottom: 4px;
     }
-    .sub-header {
-        font-size: 0.95rem;
-        color: #666;
-        margin-bottom: 1.5rem;
+    .main-sub {
+        font-size: 1rem;
+        color: #888;
+        margin-bottom: 20px;
     }
-    .source-box {
-        background: #EBF5FB;
-        border-left: 4px solid #2196F3;
-        padding: 0.75rem 1rem;
+    .source-card {
+        background: #1E293B;
+        border-left: 4px solid #7C3AED;
+        padding: 10px 14px;
         border-radius: 0 8px 8px 0;
-        margin: 0.5rem 0;
+        margin: 6px 0;
         font-size: 0.85rem;
+        color: #CBD5E1;
     }
-    .metric-card {
-        background: #F8F9FA;
-        padding: 1rem;
-        border-radius: 8px;
-        text-align: center;
-        border: 1px solid #E0E0E0;
+    /* Status badges */
+    .badge-ready {
+        background: #14532D;
+        color: #86EFAC;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        font-weight: 600;
     }
-    .stChatMessage { border-radius: 12px; }
-    div[data-testid="stSidebarContent"] { background: #F5F7FA; }
+    /* Chat styling */
+    .stChatMessage {
+        border-radius: 12px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ─── SESSION STATE ───────────────────────────────────────────────────────────
 
-def init_session_state():
+def init_state():
     defaults = {
-        "chain":          None,
-        "chat_history":   [],
-        "docs_loaded":    False,
-        "num_chunks":     0,
-        "num_pages":      0,
-        "uploaded_files": [],
-        "api_key_set":    False,
+        "chain": None,
+        "chat_history": [],
+        "docs_loaded": False,
+        "num_chunks": 0,
+        "num_pages": 0,
+        "api_key_valid": False,
+        "api_key": "",
     }
-    for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
 
-init_session_state()
+init_state()
+
+
+# ─── LAZY IMPORTS (only when needed) ─────────────────────────────────────────
+
+@st.cache_resource(show_spinner=False)
+def get_pipeline_functions():
+    from langchain_community.document_loaders import PyPDFLoader
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_community.vectorstores import FAISS
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+    from langchain.chains import ConversationalRetrievalChain
+    from langchain.memory import ConversationBufferWindowMemory
+    from langchain.prompts import PromptTemplate
+    return (PyPDFLoader, RecursiveCharacterTextSplitter, FAISS,
+            GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI,
+            ConversationalRetrievalChain, ConversationBufferWindowMemory, PromptTemplate)
 
 
 # ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## ⚙️ Setup")
+    st.markdown("## 🤖 RAG PDF Chatbot")
     st.markdown("---")
 
-    # API Key input
+    # API Key
     st.markdown("### 🔑 Gemini API Key")
-    api_key = st.text_input(
-        "Enter your Google Gemini API key",
+    st.markdown("Get your **free** key 👉 [Google AI Studio](https://aistudio.google.com/app/apikey)")
+
+    api_key_input = st.text_input(
+        "API Key",
         type="password",
-        placeholder="AIza...",
-        help="Get your free key at: makersuite.google.com/app/apikey"
+        placeholder="AIzaSy...",
+        label_visibility="collapsed"
     )
 
-    if api_key:
-        os.environ["GOOGLE_API_KEY"] = api_key
-        st.session_state.api_key_set = True
-        st.success("✅ API key set")
+    if api_key_input:
+        st.session_state.api_key = api_key_input
+        st.session_state.api_key_valid = True
+        os.environ["GOOGLE_API_KEY"] = api_key_input
+        st.success("✅ API key ready!")
     else:
-        st.warning("⚠️ Enter your Gemini API key to start")
-        st.markdown("[Get free API key →](https://makersuite.google.com/app/apikey)")
+        st.warning("⚠️ Please enter your Gemini API key above to start.")
 
     st.markdown("---")
 
     # PDF Upload
-    st.markdown("### 📄 Upload PDFs")
+    st.markdown("### 📄 Upload PDF Files")
+    st.markdown("Upload one or more PDFs to chat with")
+
     uploaded_files = st.file_uploader(
-        "Upload one or more PDF files",
+        "Choose PDFs",
         type=["pdf"],
         accept_multiple_files=True,
-        help="Supports multiple PDFs — all will be indexed together"
+        label_visibility="collapsed"
     )
 
-    if uploaded_files and api_key:
+    if uploaded_files and st.session_state.api_key_valid:
+        file_names = [f.name for f in uploaded_files]
+        st.markdown(f"**{len(uploaded_files)} file(s) selected:**")
+        for name in file_names:
+            st.markdown(f"📄 {name}")
+
         if st.button("🚀 Process PDFs", type="primary", use_container_width=True):
-            with st.spinner("Processing PDFs..."):
-                try:
-                    # Save uploaded files to temp directory
-                    temp_dir = tempfile.mkdtemp()
-                    all_docs = []
+            (PyPDFLoader, RecursiveCharacterTextSplitter, FAISS,
+             GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI,
+             ConversationalRetrievalChain, ConversationBufferWindowMemory,
+             PromptTemplate) = get_pipeline_functions()
 
-                    for uploaded_file in uploaded_files:
-                        temp_path = Path(temp_dir) / uploaded_file.name
-                        temp_path.write_bytes(uploaded_file.read())
-                        docs = load_pdfs(str(temp_path))
-                        all_docs.extend(docs)
+            progress = st.progress(0, text="Starting...")
 
-                    st.info(f"📖 Loaded {len(all_docs)} pages from {len(uploaded_files)} PDF(s)")
+            try:
+                # Step 1 — Load PDFs
+                progress.progress(20, text="📖 Loading PDFs...")
+                all_docs = []
+                temp_dir = tempfile.mkdtemp()
 
-                    # Chunk
-                    with st.spinner("Splitting into chunks..."):
-                        chunks = chunk_documents(all_docs)
+                for uploaded_file in uploaded_files:
+                    temp_path = Path(temp_dir) / uploaded_file.name
+                    temp_path.write_bytes(uploaded_file.read())
+                    loader = PyPDFLoader(str(temp_path))
+                    all_docs.extend(loader.load())
 
-                    # Embed
-                    with st.spinner("Creating embeddings with Gemini..."):
-                        vectorstore = build_vectorstore(chunks, api_key)
+                # Step 2 — Chunk
+                progress.progress(40, text="✂️ Splitting into chunks...")
+                splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=800, chunk_overlap=100
+                )
+                chunks = splitter.split_documents(all_docs)
 
-                    # Build chain
-                    chain = build_rag_chain(vectorstore, api_key)
+                # Step 3 — Embed
+                progress.progress(65, text="🧠 Creating Gemini embeddings...")
+                embeddings = GoogleGenerativeAIEmbeddings(
+                    model="models/embedding-001",
+                    google_api_key=st.session_state.api_key
+                )
+                vectorstore = FAISS.from_documents(chunks, embeddings)
 
-                    # Update session state
-                    st.session_state.chain        = chain
-                    st.session_state.docs_loaded  = True
-                    st.session_state.num_chunks   = len(chunks)
-                    st.session_state.num_pages    = len(all_docs)
-                    st.session_state.chat_history = []
+                # Step 4 — Build chain
+                progress.progress(85, text="⛓️ Building RAG chain...")
 
-                    st.success("✅ Ready to chat!")
+                PROMPT = PromptTemplate(
+                    input_variables=["context", "chat_history", "question"],
+                    template="""You are a helpful AI assistant. Answer questions based ONLY on the provided documents.
+If the answer is not in the documents, say: "I couldn't find that in the uploaded documents."
 
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
-                    st.info("Make sure your API key is valid and you have internet access.")
+Context: {context}
+Chat History: {chat_history}
+Question: {question}
+Answer:"""
+                )
 
-    st.markdown("---")
+                llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=st.session_state.api_key,
+                    temperature=0.2,
+                    convert_system_message_to_human=True
+                )
+
+                memory = ConversationBufferWindowMemory(
+                    k=5, memory_key="chat_history",
+                    return_messages=True, output_key="answer"
+                )
+
+                chain = ConversationalRetrievalChain.from_llm(
+                    llm=llm,
+                    retriever=vectorstore.as_retriever(
+                        search_type="mmr",
+                        search_kwargs={"k": 4, "fetch_k": 8}
+                    ),
+                    memory=memory,
+                    combine_docs_chain_kwargs={"prompt": PROMPT},
+                    return_source_documents=True,
+                    verbose=False
+                )
+
+                progress.progress(100, text="✅ Ready!")
+                time.sleep(0.5)
+                progress.empty()
+
+                st.session_state.chain = chain
+                st.session_state.docs_loaded = True
+                st.session_state.num_chunks = len(chunks)
+                st.session_state.num_pages = len(all_docs)
+                st.session_state.chat_history = []
+                st.success(f"✅ {len(all_docs)} pages indexed! Ask me anything.")
+                st.rerun()
+
+            except Exception as e:
+                progress.empty()
+                st.error(f"Error: {str(e)}")
+                if "api" in str(e).lower() or "key" in str(e).lower():
+                    st.info("💡 Check your API key is correct.")
+                elif "quota" in str(e).lower():
+                    st.info("💡 API quota reached. Wait 1 minute and try again.")
+
+    elif uploaded_files and not st.session_state.api_key_valid:
+        st.warning("⚠️ Enter your API key first, then process PDFs.")
 
     # Stats
     if st.session_state.docs_loaded:
+        st.markdown("---")
         st.markdown("### 📊 Index Stats")
         col1, col2 = st.columns(2)
-        with col1:
-            st.metric("Pages", st.session_state.num_pages)
-        with col2:
-            st.metric("Chunks", st.session_state.num_chunks)
+        col1.metric("Pages", st.session_state.num_pages)
+        col2.metric("Chunks", st.session_state.num_chunks)
 
     # Clear chat
     if st.session_state.chat_history:
@@ -177,52 +278,46 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("""
-    ### ℹ️ How it works
-    1. Enter your **Gemini API key** (free)
-    2. Upload **PDF documents**
-    3. Click **Process PDFs**
-    4. **Ask anything** about your documents!
+**How it works:**
+1. 🔑 Enter Gemini API key
+2. 📄 Upload PDF files
+3. 🚀 Click Process PDFs
+4. 💬 Ask anything!
 
-    **Built with:**
-    - 🔗 LangChain
-    - 🤖 Google Gemini 1.5 Flash
-    - 🗄️ FAISS Vector Store
-    - 🎈 Streamlit
-
-    **Author:** [Aleena Anam](https://github.com/anam-aleena)
+**Built by:** [Aleena Anam](https://github.com/anam-aleena)
     """)
 
 
 # ─── MAIN AREA ───────────────────────────────────────────────────────────────
 
-st.markdown('<p class="main-header">📄 RAG PDF Chatbot</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub-header">Chat with your PDF documents using Google Gemini AI + LangChain + FAISS</p>',
+st.markdown('<p class="main-title">📄 RAG PDF Chatbot</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-sub">Chat with your PDF documents using Google Gemini AI · LangChain · FAISS Vector Search</p>',
             unsafe_allow_html=True)
 
-# Status banner
-if not st.session_state.api_key_set:
-    st.info("👈 Enter your Gemini API key in the sidebar to get started. It's free!")
+if not st.session_state.api_key_valid:
+    st.info("👈 **Step 1:** Enter your free Gemini API key in the sidebar")
 elif not st.session_state.docs_loaded:
-    st.info("👈 Upload your PDF files in the sidebar and click **Process PDFs**")
+    st.info("👈 **Step 2:** Upload your PDF files and click **Process PDFs**")
 else:
-    st.success(f"✅ {st.session_state.num_pages} pages indexed across your documents. Ask me anything!")
+    st.markdown(
+        f'<span class="badge-ready">✅ {st.session_state.num_pages} pages indexed — Ready to chat!</span>',
+        unsafe_allow_html=True
+    )
 
 st.markdown("---")
 
-# Display chat history
-for message in st.session_state.chat_history:
-    with st.chat_message(message["role"],
-                         avatar="🧑" if message["role"] == "user" else "🤖"):
-        st.markdown(message["content"])
-
-        # Show sources for assistant messages
-        if message["role"] == "assistant" and message.get("sources"):
-            with st.expander(f"📚 Sources ({len(message['sources'])} references)", expanded=False):
-                for i, source in enumerate(message["sources"], 1):
+# Chat history display
+for msg in st.session_state.chat_history:
+    avatar = "🧑" if msg["role"] == "user" else "🤖"
+    with st.chat_message(msg["role"], avatar=avatar):
+        st.markdown(msg["content"])
+        if msg["role"] == "assistant" and msg.get("sources"):
+            with st.expander(f"📚 {len(msg['sources'])} source(s) referenced", expanded=False):
+                for i, src in enumerate(msg["sources"], 1):
                     st.markdown(f"""
-                    <div class="source-box">
-                        <strong>Source {i}:</strong> {source['source']} — Page {source['page']}<br>
-                        <em>"{source['excerpt']}"</em>
+                    <div class="source-card">
+                        <strong>Source {i}:</strong> {src['source']} — Page {src['page']}<br>
+                        <em>{src['excerpt']}</em>
                     </div>
                     """, unsafe_allow_html=True)
 
@@ -231,71 +326,71 @@ if prompt := st.chat_input(
     "Ask a question about your documents...",
     disabled=not st.session_state.docs_loaded
 ):
-    # Show user message
     with st.chat_message("user", avatar="🧑"):
         st.markdown(prompt)
+    st.session_state.chat_history.append({"role": "user", "content": prompt})
 
-    st.session_state.chat_history.append({
-        "role":    "user",
-        "content": prompt
-    })
-
-    # Generate response
     with st.chat_message("assistant", avatar="🤖"):
-        with st.spinner("Thinking..."):
+        with st.spinner("Searching documents and generating answer..."):
             try:
-                result = ask(st.session_state.chain, prompt)
+                result  = st.session_state.chain({"question": prompt})
                 answer  = result["answer"]
-                sources = result["sources"]
+                sources = [
+                    {
+                        "page":    doc.metadata.get("page", 0) + 1,
+                        "source":  Path(doc.metadata.get("source", "doc")).name,
+                        "excerpt": doc.page_content[:180] + "..."
+                    }
+                    for doc in result.get("source_documents", [])
+                ]
 
-                # Stream the answer word by word
+                # Stream response
                 placeholder = st.empty()
                 displayed = ""
                 for word in answer.split():
                     displayed += word + " "
                     placeholder.markdown(displayed + "▌")
-                    time.sleep(0.02)
+                    time.sleep(0.015)
                 placeholder.markdown(displayed)
 
-                # Show sources
                 if sources:
-                    with st.expander(f"📚 Sources ({len(sources)} references)", expanded=False):
-                        for i, source in enumerate(sources, 1):
+                    with st.expander(f"📚 {len(sources)} source(s) referenced", expanded=False):
+                        for i, src in enumerate(sources, 1):
                             st.markdown(f"""
-                            <div class="source-box">
-                                <strong>Source {i}:</strong> {source['source']} — Page {source['page']}<br>
-                                <em>"{source['excerpt']}"</em>
+                            <div class="source-card">
+                                <strong>Source {i}:</strong> {src['source']} — Page {src['page']}<br>
+                                <em>{src['excerpt']}</em>
                             </div>
                             """, unsafe_allow_html=True)
 
                 st.session_state.chat_history.append({
-                    "role":    "assistant",
+                    "role": "assistant",
                     "content": answer,
                     "sources": sources
                 })
 
             except Exception as e:
-                error_msg = f"Error generating response: {str(e)}"
-                st.error(error_msg)
-                if "quota" in str(e).lower():
-                    st.info("💡 You may have hit the free tier limit. Wait a minute and try again.")
+                err = str(e)
+                st.error(f"Error: {err}")
+                if "quota" in err.lower():
+                    st.info("💡 API quota hit. Wait 1 minute and try again.")
+                elif "api" in err.lower():
+                    st.info("💡 API key issue. Check your key in the sidebar.")
 
-
-# ─── EXAMPLE QUESTIONS ───────────────────────────────────────────────────────
-
+# Example prompts when no chat yet
 if st.session_state.docs_loaded and not st.session_state.chat_history:
     st.markdown("### 💡 Try asking:")
-    col1, col2, col3 = st.columns(3)
     examples = [
-        "Summarise the main points of this document",
-        "What are the key findings?",
-        "What does this document say about [topic]?",
-        "List the main recommendations",
-        "What is the conclusion?",
-        "Compare the different sections"
+        "Summarise this document",
+        "What are the key points?",
+        "What is the main conclusion?",
+        "List the main topics covered",
+        "What does this say about [topic]?",
+        "Give me a brief overview"
     ]
-    for i, (col, example) in enumerate(zip([col1, col2, col3, col1, col2, col3], examples)):
+    cols = st.columns(3)
+    for i, (col, ex) in enumerate(zip(cols * 2, examples)):
         with col:
-            if st.button(f"💬 {example}", key=f"ex_{i}", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": example})
+            if st.button(f"💬 {ex}", key=f"ex{i}", use_container_width=True):
+                st.session_state.chat_history.append({"role": "user", "content": ex})
                 st.rerun()
