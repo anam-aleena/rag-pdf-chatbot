@@ -149,11 +149,11 @@ ANSWER:"""
 
     # Try different model names in order
     model_names = [
-        "gemini-1.5-flash",
-        "gemini-1.5-pro",
-        "gemini-pro",
-        "models/gemini-1.5-flash",
-        "models/gemini-pro"
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "models/gemini-2.5-flash",
+        "models/gemini-2.0-flash"
     ]
 
     last_error = None
